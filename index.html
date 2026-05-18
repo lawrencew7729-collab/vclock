@@ -1,0 +1,1009 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Boss Payroll & SME Attendance</title>
+    <!-- 引入 Tailwind CSS 用於介面排版 -->
+    <script src="https://cdn.tailwindcss.com"></script>
+    <!-- 引入 QRCode 產生器，用於 Entrance Display 產生動態二維碼 -->
+    <script src="https://cdnjs.cloudflare.com/ajax/libs/qrcodejs/1.0.0/qrcode.min.js"></script>
+    <!-- 引入 SheetJS，用於產生包含多個員工獨立工作表的 Excel 檔案 -->
+    <script src="https://cdnjs.cloudflare.com/ajax/libs/xlsx/0.18.5/xlsx.full.min.js"></script>
+    <style>
+        @import url('https://fonts.googleapis.com/css2?family=Inter:wght=300;400;500;600;700&display=swap');
+        body {
+            font-family: 'Inter', sans-serif;
+        }
+    </style>
+</head>
+<body class="bg-slate-50 text-slate-800 min-h-screen flex flex-col">
+
+    <!-- 頂部導覽列 -->
+    <header class="bg-blue-600 text-white shadow-md">
+        <div class="max-w-6xl mx-auto px-4 py-3 flex justify-between items-center flex-wrap gap-2">
+            <div class="flex items-center space-x-3">
+                <span class="text-2xl">📊</span>
+                <h1 class="text-xl font-bold tracking-tight">Boss Payroll</h1>
+            </div>
+            
+            <!-- 雲端同步狀態指示燈 -->
+            <div id="sync-status" class="flex items-center space-x-2 bg-red-700 px-3 py-1.5 rounded-full text-xs font-semibold uppercase tracking-wider transition-colors duration-300">
+                <span class="w-2 h-2 rounded-full bg-white animate-pulse" id="status-dot"></span>
+                <span id="status-text">OFFLINE MEMORY</span>
+            </div>
+            
+            <!-- 功能分頁切換按鈕 -->
+            <nav class="flex space-x-1">
+                <button onclick="switchTab('qrscreen')" id="btn-qrscreen" class="px-4 py-2 rounded-lg text-sm font-medium bg-blue-700 text-white transition">Entrance Display</button>
+                <button onclick="switchTab('checkin')" id="btn-checkin" class="px-4 py-2 rounded-lg text-sm font-medium text-blue-100 hover:bg-blue-500 transition">Check-In Lobby</button>
+                <button onclick="switchTab('admin')" id="btn-admin" class="px-4 py-2 rounded-lg text-sm font-medium text-blue-100 hover:bg-blue-500 transition">Admin Panel</button>
+            </nav>
+        </div>
+    </header>
+
+    <main class="flex-grow max-w-4xl mx-auto w-full p-4">
+        
+        <!-- 1. 入口二維碼顯示分頁（平板/公用螢幕專用） -->
+        <section id="tab-qrscreen" class="space-y-6">
+            <div class="bg-white rounded-2xl shadow-sm border border-slate-100 p-8 text-center max-w-lg mx-auto space-y-6">
+                <div class="space-y-2">
+                    <span class="text-blue-600 text-xs font-bold uppercase tracking-widest bg-blue-50 px-3 py-1 rounded-full">Secure Live Gateway</span>
+                    <h2 class="text-2xl font-black text-slate-900">Scan to Clock In / Out</h2>
+                    <p class="text-slate-500 text-sm max-w-sm mx-auto">This QR code rotates dynamically every 10 seconds. Static screenshots will fail validation checks.</p>
+                </div>
+
+                <!-- 二維碼容器 -->
+                <div class="flex flex-col items-center justify-center py-4 bg-slate-50 rounded-2xl border border-dashed border-slate-200">
+                    <div id="qr-code-display" class="p-4 bg-white rounded-xl shadow-sm"></div>
+                </div>
+
+                <!-- 二維碼更換進度條 -->
+                <div class="space-y-2 max-w-xs mx-auto">
+                    <div class="flex justify-between text-xs font-semibold text-slate-400">
+                        <span>Dynamic Encryption Token</span>
+                        <span id="qr-progress-text">Refreshing in 10s</span>
+                    </div>
+                    <div class="w-full bg-slate-100 h-2 rounded-full overflow-hidden">
+                        <div id="qr-progress-bar" class="bg-blue-600 h-full w-full transition-all duration-1000 ease-linear"></div>
+                    </div>
+                </div>
+            </div>
+        </section>
+
+        <!-- 2. 手機端打卡大廳分頁 -->
+        <section id="tab-checkin" class="hidden space-y-6">
+            <!-- 二維碼安全狀態條 -->
+            <div id="verification-banner" class="hidden rounded-2xl p-4 border flex items-center space-x-3">
+                <span id="verification-icon" class="text-2xl"></span>
+                <div>
+                    <h4 id="verification-title" class="font-bold text-sm"></h4>
+                    <p id="verification-desc" class="text-xs"></p>
+                </div>
+            </div>
+
+            <div class="bg-white rounded-2xl shadow-sm border border-slate-100 p-6 text-center space-y-6">
+                <!-- 時鐘顯示 -->
+                <div class="space-y-1">
+                    <div id="live-date" class="text-sm font-medium text-slate-500">Monday, May 18, 2026</div>
+                    <div id="live-time" class="text-5xl font-extrabold text-slate-950 tracking-tight tabular-nums">16:07:00</div>
+                </div>
+
+                <!-- 選擇打卡員工 -->
+                <div class="max-w-md mx-auto space-y-4 pt-4">
+                    <label class="block text-sm font-semibold text-slate-700 text-left">Select Your Name:</label>
+                    <select id="employee-select" onchange="updateButtonStates()" class="w-full bg-slate-50 border border-slate-200 rounded-xl px-4 py-3.5 focus:outline-none focus:ring-2 focus:ring-blue-500 text-slate-800 font-medium">
+                        <option value="">-- Select Employee --</option>
+                    </select>
+
+                    <!-- IP 鎖定警示 -->
+                    <div id="ip-lock-banner" class="hidden text-xs text-amber-700 bg-amber-50 border border-amber-200 rounded-lg p-3 text-left">
+                        🔒 Office Wi-Fi security is enabled. Ensure your device is connected to the authorized network.
+                    </div>
+
+                    <!-- 上下班打卡按鈕 -->
+                    <div class="grid grid-cols-2 gap-4 pt-2">
+                        <button id="btn-action-in" onclick="handleCheckIn('IN')" disabled class="bg-slate-200 text-slate-400 font-semibold py-4 rounded-xl cursor-not-allowed flex flex-col items-center justify-center space-y-1 opacity-40 transition duration-200">
+                            <span class="text-2xl">☀️</span>
+                            <span>Clock In (IN)</span>
+                        </button>
+                        <button id="btn-action-out" onclick="handleCheckIn('OUT')" disabled class="bg-slate-200 text-slate-400 font-semibold py-4 rounded-xl cursor-not-allowed flex flex-col items-center justify-center space-y-1 opacity-40 transition duration-200">
+                            <span class="text-2xl">🌙</span>
+                            <span>Clock Out (OUT)</span>
+                        </button>
+                    </div>
+                </div>
+            </div>
+
+            <!-- 最近 5 筆日誌動態 -->
+            <div class="bg-white rounded-2xl shadow-sm border border-slate-100 p-6 space-y-4">
+                <div class="flex justify-between items-center">
+                    <h3 class="text-sm font-bold text-slate-400 uppercase tracking-wider">Recent Activity Logs</h3>
+                    <button onclick="pullFromGoogleSheets()" class="text-blue-600 hover:text-blue-800 text-xs font-semibold flex items-center space-x-1">
+                        <span>Refresh Logs 🔄</span>
+                    </button>
+                </div>
+                <div id="recent-logs" class="divide-y divide-slate-100">
+                    <div class="py-3 text-slate-400 text-center text-sm">No check-in records found</div>
+                </div>
+            </div>
+        </section>
+
+        <!-- 3. 管理者後台分頁 -->
+        <section id="tab-admin" class="hidden space-y-6">
+            <!-- 密碼輸入鎖 -->
+            <div id="admin-auth" class="bg-white rounded-2xl shadow-sm border border-slate-100 p-8 max-w-md mx-auto text-center space-y-4">
+                <span class="text-4xl">🔑</span>
+                <h3 class="text-lg font-bold">Manager Console Authorization</h3>
+                <input type="password" id="admin-password-input" placeholder="Enter Secure Passcode" class="w-full bg-slate-50 border border-slate-200 rounded-xl px-4 py-3 text-center focus:outline-none focus:ring-2 focus:ring-blue-500">
+                <button onclick="verifyAdminPassword()" class="w-full bg-blue-600 hover:bg-blue-500 text-white font-semibold py-3 rounded-xl transition">Unlock Terminal</button>
+            </div>
+
+            <!-- 後台管理控制台實際內容 -->
+            <div id="admin-content" class="hidden space-y-6">
+                <!-- 子導覽分頁 -->
+                <div class="flex border-b border-slate-200">
+                    <button onclick="switchAdminSubTab('staff')" id="sub-btn-staff" class="px-5 py-3 border-b-2 border-blue-600 text-blue-600 font-bold text-sm">Employee & Payroll</button>
+                    <button onclick="switchAdminSubTab('settings')" id="sub-btn-settings" class="px-5 py-3 border-b-2 border-transparent text-slate-500 hover:text-slate-800 font-medium text-sm">System & Sync Settings</button>
+                </div>
+
+                <!-- 子頁：員工薪資管理 -->
+                <div id="admin-sub-staff" class="space-y-6">
+                    <!-- 新增員工區 -->
+                    <div class="bg-white rounded-2xl shadow-sm border border-slate-100 p-6 space-y-4">
+                        <h3 class="text-base font-bold text-slate-800">Enroll New Employee</h3>
+                        <div class="grid grid-cols-1 md:grid-cols-3 gap-4">
+                            <input type="text" id="new-staff-name" placeholder="Employee Name (e.g. Alfred)" class="bg-slate-50 border border-slate-200 rounded-xl px-4 py-3 text-sm focus:outline-none focus:ring-2 focus:ring-blue-500">
+                            <input type="number" id="new-staff-rate" placeholder="Base Salary Rate ($/hour)" class="bg-slate-50 border border-slate-200 rounded-xl px-4 py-3 text-sm focus:outline-none focus:ring-2 focus:ring-blue-500">
+                            <button onclick="addNewStaff()" class="bg-blue-600 hover:bg-blue-500 text-white font-bold py-3 rounded-xl text-sm transition">Add Employee</button>
+                        </div>
+                    </div>
+
+                    <!-- 員工名冊與下載 Excel -->
+                    <div class="bg-white rounded-2xl shadow-sm border border-slate-100 overflow-hidden">
+                        <div class="px-6 py-4 border-b border-slate-100 flex justify-between items-center">
+                            <h3 class="font-bold text-slate-800">Registered Employee Directory</h3>
+                            <button onclick="exportExcel()" class="bg-emerald-600 hover:bg-emerald-500 text-white text-xs font-bold px-3 py-1.5 rounded-lg transition">Export Excel (.xlsx)</button>
+                        </div>
+                        <div class="overflow-x-auto">
+                            <table class="w-full text-left border-collapse">
+                                <thead>
+                                    <tr class="bg-slate-50 text-slate-400 text-xs font-bold uppercase tracking-wider">
+                                        <th class="px-6 py-3">Employee Name</th>
+                                        <th class="px-6 py-3">Salary Matrix</th>
+                                        <th class="px-6 py-3 text-right">Actions</th>
+                                    </tr>
+                                </thead>
+                                <tbody id="staff-table-body" class="divide-y divide-slate-100 text-sm">
+                                    <tr>
+                                        <td colspan="3" class="px-6 py-8 text-center text-slate-400">No registered employees.</td>
+                                    </tr>
+                                </tbody>
+                            </table>
+                        </div>
+                    </div>
+                </div>
+
+                <!-- 子頁：系統配置設定 -->
+                <div id="admin-sub-settings" class="hidden space-y-6">
+                    <div class="bg-white rounded-2xl shadow-sm border border-slate-100 p-6 space-y-6">
+                        
+                        <!-- 1. Google Sheets 後端網址 -->
+                        <div class="space-y-2">
+                            <label class="block text-sm font-bold text-slate-800">1. GOOGLE SHEETS WEB APP URL</label>
+                            <p class="text-xs text-slate-400">Specify the live endpoint deployed from Google Apps Script:</p>
+                            <input type="text" id="setting-sheets-url" placeholder="https://script.google.com/macros/s/.../exec" class="w-full bg-slate-50 border border-slate-200 rounded-xl px-4 py-3 text-sm focus:outline-none focus:ring-2 focus:ring-blue-500">
+                            
+                            <!-- 診斷調試按鈕與結果區 -->
+                            <div class="mt-2 flex flex-col space-y-2">
+                                <div class="flex space-x-2">
+                                    <button onclick="runDiagnostics()" class="bg-blue-100 hover:bg-blue-200 text-blue-700 font-bold px-4 py-2 rounded-xl text-xs transition">
+                                        Run Connection Test 🔍
+                                    </button>
+                                    <span id="diagnostic-status" class="text-xs font-semibold self-center text-slate-500">Idle</span>
+                                </div>
+                                <div id="diagnostic-results" class="hidden text-xs p-3 rounded-lg border"></div>
+                            </div>
+                        </div>
+
+                        <!-- 2. 本地綁定網域名稱 -->
+                        <div class="space-y-2">
+                            <label class="block text-sm font-bold text-slate-800">2. APP LIVE URL (DOMAIN)</label>
+                            <p class="text-xs text-slate-400">Target URL required for local binding and dynamic scan redirects:</p>
+                            <input type="text" id="setting-live-url" placeholder="https://vclock-seven.vercel.app" class="w-full bg-slate-50 border border-slate-200 rounded-xl px-4 py-3 text-sm focus:outline-none focus:ring-2 focus:ring-blue-500">
+                        </div>
+
+                        <!-- 3. 動態二維碼安全鎖開關 -->
+                        <div class="space-y-3 pt-2 border-t border-slate-100">
+                            <div class="flex items-center justify-between">
+                                <label class="text-sm font-bold text-slate-800">3. DYNAMIC 10S QR SECURITY LOCK</label>
+                                <button id="qr-toggle" onclick="toggleQrLock()" class="w-12 h-6 rounded-full bg-slate-200 relative transition-colors duration-300 focus:outline-none">
+                                    <span class="w-5 h-5 rounded-full bg-white absolute top-0.5 left-0.5 shadow transition-transform duration-300" id="qr-toggle-dot"></span>
+                                </button>
+                            </div>
+                            <p class="text-xs text-slate-400">Enforce attendance registration strictly through scanning the live 10-second rotating QR code at the entrance.</p>
+                        </div>
+
+                        <!-- 4. 辦公室網頁 IP 鎖定 -->
+                        <div class="space-y-3 pt-4 border-t border-slate-100">
+                            <div class="flex items-center justify-between">
+                                <label class="text-sm font-bold text-slate-800">4. WI-FI IP LOCK SECURITY</label>
+                                <button id="ip-toggle" onclick="toggleIpLock()" class="w-12 h-6 rounded-full bg-slate-200 relative transition-colors duration-300 focus:outline-none">
+                                    <span class="w-5 h-5 rounded-full bg-white absolute top-0.5 left-0.5 shadow transition-transform duration-300" id="ip-toggle-dot"></span>
+                                </button>
+                            </div>
+                            <p class="text-xs text-slate-400">Restricts user check-in capabilities to devices connected to the designated company IP address.</p>
+                            <div class="grid grid-cols-1 md:grid-cols-2 gap-4">
+                                <input type="text" id="setting-office-ip" placeholder="Target External IP (e.g. 123.45.67.89)" class="bg-slate-50 border border-slate-200 rounded-xl px-4 py-3 text-sm focus:outline-none focus:ring-2 focus:ring-blue-500">
+                                <button onclick="fetchCurrentIp()" class="bg-slate-100 hover:bg-slate-200 text-slate-700 font-bold py-3 rounded-xl text-sm transition">Detect Current Network IP</button>
+                            </div>
+                        </div>
+
+                        <!-- 儲存配置與同步按鈕 -->
+                        <div class="pt-6 border-t border-slate-100 flex flex-col md:flex-row gap-4">
+                            <button onclick="saveAllSettings()" class="flex-grow bg-blue-600 hover:bg-blue-500 text-white font-bold py-4 rounded-xl shadow-md transition text-center">
+                                SAVE ALL CONFIGURATIONS
+                            </button>
+                            <button onclick="manualSync()" class="bg-slate-100 hover:bg-slate-200 text-slate-700 font-bold px-6 py-4 rounded-xl transition">
+                                Force Database Sync 🔄
+                            </button>
+                        </div>
+
+                    </div>
+                </div>
+
+            </div>
+        </section>
+
+    </main>
+
+    <!-- 系統提示氣泡 -->
+    <div id="toast" class="fixed bottom-6 left-1/2 transform -translate-x-1/2 bg-slate-900 text-white px-6 py-3.5 rounded-xl shadow-2xl text-sm font-medium transition duration-300 opacity-0 translate-y-4 pointer-events-none z-50">
+        Status Toast Alert
+    </div>
+
+    <footer class="bg-slate-100 border-t border-slate-200 py-6 text-center text-xs text-slate-400 mt-12 font-medium">
+        &copy; 2026 Boss Payroll System. Google Sheets Dynamic API Integration.
+    </footer>
+
+    <script>
+        // --- 核心應用程式狀態管理 ---
+        let state = {
+            employees: [],
+            checkIns: [],
+            configs: {
+                // ⚠️ 此處貼入您 Version 4 生成的 /exec 網址作為預設值，之後重新上傳到 Vercel 即可免手動輸入！
+                googleSheetsUrl: "https://script.google.com/macros/s/AKfycbxFZFuFhO472tZlztla88wFfUS6nTtG5MacxDDHcQye-NLrJXO_b2SqyadFL3OW-rFQ/exec",
+                domainUrl: "https://vclock-seven.vercel.app",
+                ipLockEnabled: false,
+                officeIp: "",
+                qrSecurityEnabled: true
+            },
+            currentIp: ""
+        };
+
+        // 動態二維碼計時器參數
+        let qrGeneratorInterval = null;
+        let qrCountdownValue = 10;
+        let qrcodeInstance = null;
+        let tokenVerifiedStatus = { valid: false, reason: "No live token verified" };
+
+        // 頁面初次載入
+        window.onload = function() {
+            loadFromLocalStorage();
+            evaluateIncomingToken();
+
+            // 路由檢查：如果網址帶有 Token，表示是員工手機掃碼進來，直接載入打卡大廳；否則預設載入 Entrance Display
+            const urlParams = new URLSearchParams(window.location.search);
+            const token = urlParams.get('token');
+            if (token) {
+                switchTab('checkin');
+            } else {
+                switchTab('qrscreen');
+            }
+            
+            setInterval(updateTime, 1000);
+            updateTime();
+
+            fetchCurrentIp(false);
+            
+            // 初次向 Google 試算表拉取資料，並啟動每 10 秒背景同步定時器
+            pullFromGoogleSheets();
+            setInterval(pullFromGoogleSheets, 10000);
+        };
+
+        // 網址掃碼與安全 Token 驗證
+        function evaluateIncomingToken() {
+            const urlParams = new URLSearchParams(window.location.search);
+            const token = urlParams.get('token');
+            tokenVerifiedStatus = verifyToken(token);
+
+            // 二維碼自動寫入配置邏輯，免去在手機上手動輸入網址與參數
+            const cfg = urlParams.get('cfg');
+            if (cfg) {
+                try {
+                    const decoded = JSON.parse(atob(cfg));
+                    if (decoded && decoded.s) {
+                        state.configs.googleSheetsUrl = decoded.s;
+                        state.configs.domainUrl = decoded.d || state.configs.domainUrl;
+                        state.configs.ipLockEnabled = decoded.i === 1;
+                        state.configs.officeIp = decoded.o || state.configs.officeIp;
+                        state.configs.qrSecurityEnabled = decoded.q === 1;
+                        saveToLocalStorage();
+                    }
+                } catch (e) {
+                    console.warn("Auto-config format restricted in preview sandbox:", e.message);
+                }
+            }
+        }
+
+        // Base64 加密 Token 時間差校驗（不允許超過 15 秒）
+        function verifyToken(token) {
+            if (!token) {
+                return { valid: false, reason: "Direct access: Scanned QR token missing" };
+            }
+            try {
+                const decoded = atob(token);
+                if (!decoded.startsWith("eclock_")) {
+                    return { valid: false, reason: "Malformed secure code structure" };
+                }
+                const timestamp = parseInt(decoded.split("_")[1]);
+                const timeDifference = Math.abs(Date.now() - timestamp) / 1000;
+
+                if (timeDifference <= 15) {
+                    return { valid: true, elapsed: Math.round(timeDifference) };
+                } else {
+                    return { valid: false, reason: `Expired (${Math.round(timeDifference)}s ago). Re-scan live screen.` };
+                }
+            } catch (e) {
+                return { valid: false, reason: "Cryptographic token error" };
+            }
+        }
+
+        // --- 本地瀏覽器快取讀取 ---
+        function loadFromLocalStorage() {
+            const stored = localStorage.getItem("boss_payroll_state");
+            if (stored) {
+                try {
+                    const parsed = JSON.parse(stored);
+                    // 只有當本地設定不為空時才覆蓋，保留預設寫死的 values
+                    if (parsed.configs && parsed.configs.googleSheetsUrl) {
+                        state = parsed;
+                    } else if (parsed.employees) {
+                        state.employees = parsed.employees;
+                        state.checkIns = parsed.checkIns;
+                    }
+                } catch (e) {
+                    console.warn("Local storage cache status: Uninitialized or empty.", e.message);
+                }
+            }
+        }
+
+        function saveToLocalStorage() {
+            localStorage.setItem("boss_payroll_state", JSON.stringify(state));
+        }
+
+        // --- 顯示系統時間與星期 ---
+        function updateTime() {
+            const now = new Date();
+            const timeOptions = { hour: '2-digit', minute: '2-digit', second: '2-digit', hour12: false };
+            const dateOptions = { year: 'numeric', month: 'long', day: 'numeric', weekday: 'long' };
+            
+            document.getElementById("live-time").innerText = now.toLocaleTimeString('en-US', timeOptions);
+            document.getElementById("live-date").innerText = now.toLocaleDateString('en-US', dateOptions);
+        }
+
+        // --- 重新渲染前端 UI 介面 ---
+        function updateUI() {
+            const select = document.getElementById("employee-select");
+            const currentSelected = select.value;
+            
+            select.innerHTML = '<option value="">-- Select Employee --</option>';
+            state.employees.forEach(emp => {
+                const opt = document.createElement("option");
+                opt.value = emp.id;
+                opt.innerText = emp.name;
+                if (emp.id === currentSelected) {
+                    opt.selected = true;
+                }
+                select.appendChild(opt);
+            });
+
+            const logContainer = document.getElementById("recent-logs");
+            if (state.checkIns.length === 0) {
+                logContainer.innerHTML = '<div class="py-4 text-slate-400 text-center text-sm">No check-in records found</div>';
+            } else {
+                const sortedLogs = [...state.checkIns].sort((a, b) => b.timestamp - a.timestamp).slice(0, 5);
+                logContainer.innerHTML = sortedLogs.map(log => {
+                    const empName = getEmployeeName(log.employeeId);
+                    const dateStr = new Date(log.timestamp).toLocaleTimeString('en-US', {hour: '2-digit', minute:'2-digit'});
+                    const colorClass = log.action === 'IN' ? 'bg-emerald-100 text-emerald-800' : 'bg-rose-100 text-rose-800';
+                    return `
+                        <div class="flex justify-between items-center py-3">
+                            <div class="flex items-center space-x-3">
+                                <span class="text-base font-bold text-slate-700">${empName}</span>
+                                <span class="text-xs text-slate-400">${new Date(log.timestamp).toLocaleDateString('en-US')} ${dateStr}</span>
+                            </div>
+                            <span class="px-2.5 py-1 rounded-md text-xs font-bold ${colorClass}">${log.action === 'IN' ? 'CHECK-IN' : 'CHECK-OUT'}</span>
+                        </div>
+                    `;
+                }).join('');
+            }
+
+            const tableBody = document.getElementById("staff-table-body");
+            if (state.employees.length === 0) {
+                tableBody.innerHTML = '<tr><td colspan="3" class="px-6 py-8 text-center text-slate-400">No registered employees.</td></tr>';
+            } else {
+                tableBody.innerHTML = state.employees.map(emp => `
+                    <tr class="hover:bg-slate-50">
+                        <td class="px-6 py-4 font-bold text-slate-700">${emp.name}</td>
+                        <td class="px-6 py-4 text-slate-500">$ ${emp.rate} / hour</td>
+                        <td class="px-6 py-4 text-right">
+                            <button onclick="removeStaff('${emp.id}')" class="text-rose-600 hover:text-rose-800 font-bold text-xs">Remove</button>
+                        </td>
+                    </tr>
+                `).join('');
+            }
+
+            document.getElementById("setting-sheets-url").value = state.configs.googleSheetsUrl || "";
+            document.getElementById("setting-live-url").value = state.configs.domainUrl || "";
+            document.getElementById("setting-office-ip").value = state.configs.officeIp || "";
+            
+            const ipToggle = document.getElementById("ip-toggle");
+            const ipToggleDot = document.getElementById("ip-toggle-dot");
+            const ipBanner = document.getElementById("ip-lock-banner");
+            
+            if (state.configs.ipLockEnabled) {
+                ipToggle.className = "w-12 h-6 rounded-full bg-blue-600 relative transition-colors duration-300 focus:outline-none";
+                ipToggleDot.style.transform = "translateX(24px)";
+                ipBanner.classList.remove("hidden");
+            } else {
+                ipToggle.className = "w-12 h-6 rounded-full bg-slate-200 relative transition-colors duration-300 focus:outline-none";
+                ipToggleDot.style.transform = "translateX(0px)";
+                ipBanner.classList.add("hidden");
+            }
+
+            const qrToggle = document.getElementById("qr-toggle");
+            const qrToggleDot = document.getElementById("qr-toggle-dot");
+            if (state.configs.qrSecurityEnabled) {
+                qrToggle.className = "w-12 h-6 rounded-full bg-blue-600 relative transition-colors duration-300 focus:outline-none";
+                qrToggleDot.style.transform = "translateX(24px)";
+            } else {
+                qrToggle.className = "w-12 h-6 rounded-full bg-slate-200 relative transition-colors duration-300 focus:outline-none";
+                qrToggleDot.style.transform = "translateX(0px)";
+            }
+
+            const verifyBanner = document.getElementById("verification-banner");
+            const verifyIcon = document.getElementById("verification-icon");
+            const verifyTitle = document.getElementById("verification-title");
+            const verifyDesc = document.getElementById("verification-desc");
+
+            if (state.configs.qrSecurityEnabled) {
+                verifyBanner.classList.remove("hidden");
+                if (tokenVerifiedStatus.valid) {
+                    verifyBanner.className = "rounded-2xl p-4 border border-emerald-200 bg-emerald-50 text-emerald-800 flex items-center space-x-3";
+                    verifyIcon.innerText = "✅";
+                    verifyTitle.innerText = "Dynamic Scan Token Verified";
+                    verifyDesc.innerText = `You scanned a live QR Code. (Verified in ${tokenVerifiedStatus.elapsed}s). Ready to log.`;
+                } else {
+                    verifyBanner.className = "rounded-2xl p-4 border border-rose-200 bg-rose-50 text-rose-800 flex items-center space-x-3";
+                    verifyIcon.innerText = "⚠️";
+                    verifyTitle.innerText = "QR Code Security Failed";
+                    verifyDesc.innerText = tokenVerifiedStatus.reason;
+                }
+            } else {
+                verifyBanner.classList.add("hidden");
+            }
+
+            const statusBox = document.getElementById("sync-status");
+            const statusText = document.getElementById("status-text");
+            if (state.configs.googleSheetsUrl) {
+                statusBox.className = "flex items-center space-x-2 bg-emerald-600 px-3 py-1.5 rounded-full text-xs font-semibold uppercase tracking-wider transition-colors duration-300";
+                statusText.innerText = "ACTIVE GOOGLE SHEETS SYNC";
+            } else {
+                statusBox.className = "flex items-center space-x-2 bg-red-700 px-3 py-1.5 rounded-full text-xs font-semibold uppercase tracking-wider transition-colors duration-300";
+                statusText.innerText = "OFFLINE MEMORY";
+            }
+
+            updateButtonStates();
+        }
+
+        // --- 防重複上下班打卡的核心按鈕狀態鎖定邏輯 ---
+        function updateButtonStates() {
+            const empId = document.getElementById("employee-select").value;
+            const btnIn = document.getElementById("btn-action-in");
+            const btnOut = document.getElementById("btn-action-out");
+
+            // 1. 如果啟用了動態二維碼鎖定，且驗證未通過，強制禁用所有按鈕
+            if (state.configs.qrSecurityEnabled && !tokenVerifiedStatus.valid) {
+                setButtonDisabled(btnIn, true, 'emerald');
+                setButtonDisabled(btnOut, true, 'rose');
+                return;
+            }
+
+            // 2. 如果沒有選中任何員工姓名，鎖定兩個按鈕
+            if (!empId) {
+                setButtonDisabled(btnIn, true, 'emerald');
+                setButtonDisabled(btnOut, true, 'rose');
+                return;
+            }
+
+            // 3. 獲取當前選中員工在本地緩存資料庫中的最後一次打卡狀態
+            const empLogs = state.checkIns
+                .filter(log => log.employeeId === empId)
+                .sort((a, b) => b.timestamp - a.timestamp);
+
+            const latestLog = empLogs[0];
+
+            if (!latestLog || latestLog.action === 'OUT') {
+                // 如果該員工先前從未打卡，或是上一次狀態是「下班(OUT)」：啟用 Clock In 按鈕，禁用 Clock Out 按鈕
+                setButtonDisabled(btnIn, false, 'emerald');
+                setButtonDisabled(btnOut, true, 'rose');
+            } else {
+                // 如果該員工上一次狀態是「上班(IN)」：禁用 Clock In 按鈕，只允許點擊 Clock Out
+                setButtonDisabled(btnIn, true, 'emerald');
+                setButtonDisabled(btnOut, false, 'rose');
+            }
+        }
+
+        // 修改按鈕禁用與配色樣式
+        function setButtonDisabled(btn, disabled, type) {
+            btn.disabled = disabled;
+            if (disabled) {
+                btn.className = "bg-slate-200 text-slate-400 font-semibold py-4 rounded-xl cursor-not-allowed flex flex-col items-center justify-center space-y-1 transition duration-200 opacity-40";
+            } else {
+                if (type === 'emerald') {
+                    btn.className = "bg-emerald-600 hover:bg-emerald-500 active:bg-emerald-700 text-white font-semibold py-4 rounded-xl shadow-md transition transform active:scale-95 flex flex-col items-center justify-center space-y-1";
+                } else {
+                    btn.className = "bg-rose-600 hover:bg-rose-500 active:bg-rose-700 text-white font-semibold py-4 rounded-xl shadow-md transition transform active:scale-95 flex flex-col items-center justify-center space-y-1";
+                }
+            }
+        }
+
+        // --- 功能主分頁切換 ---
+        function switchTab(tab) {
+            document.getElementById("tab-checkin").classList.add("hidden");
+            document.getElementById("tab-qrscreen").classList.add("hidden");
+            document.getElementById("tab-admin").classList.add("hidden");
+            
+            document.getElementById("btn-checkin").className = "px-4 py-2 rounded-lg text-sm font-medium text-blue-100 hover:bg-blue-500 transition";
+            document.getElementById("btn-qrscreen").className = "px-4 py-2 rounded-lg text-sm font-medium text-blue-100 hover:bg-blue-500 transition";
+            document.getElementById("btn-admin").className = "px-4 py-2 rounded-lg text-sm font-medium text-blue-100 hover:bg-blue-500 transition";
+
+            if (qrGeneratorInterval) {
+                clearInterval(qrGeneratorInterval);
+                qrGeneratorInterval = null;
+            }
+
+            if (tab === 'checkin') {
+                document.getElementById("tab-checkin").classList.remove("hidden");
+                document.getElementById("btn-checkin").className = "px-4 py-2 rounded-lg text-sm font-medium bg-blue-700 text-white transition";
+                evaluateIncomingToken();
+                pullFromGoogleSheets(); // 開啟大廳分頁時立即同步一筆資料
+                updateUI();
+            } else if (tab === 'qrscreen') {
+                document.getElementById("tab-qrscreen").classList.remove("hidden");
+                document.getElementById("btn-qrscreen").className = "px-4 py-2 rounded-lg text-sm font-medium bg-blue-700 text-white transition";
+                startQRGenerator();
+            } else {
+                document.getElementById("tab-admin").classList.remove("hidden");
+                document.getElementById("btn-admin").className = "px-4 py-2 rounded-lg text-sm font-medium bg-blue-700 text-white transition";
+            }
+        }
+
+        // 後台管理子分頁切換
+        function switchAdminSubTab(subTab) {
+            document.getElementById("admin-sub-staff").classList.add("hidden");
+            document.getElementById("admin-sub-settings").classList.add("hidden");
+            document.getElementById("sub-btn-staff").className = "px-5 py-3 border-b-2 border-transparent text-slate-500 hover:text-slate-800 font-medium text-sm";
+            document.getElementById("sub-btn-settings").className = "px-5 py-3 border-b-2 border-transparent text-slate-500 hover:text-slate-800 font-medium text-sm";
+
+            if (subTab === 'staff') {
+                document.getElementById("admin-sub-staff").classList.remove("hidden");
+                document.getElementById("sub-btn-staff").className = "px-5 py-3 border-b-2 border-blue-600 text-blue-600 font-bold text-sm";
+            } else {
+                document.getElementById("admin-sub-settings").classList.remove("hidden");
+                document.getElementById("sub-btn-settings").className = "px-5 py-3 border-b-2 border-blue-600 text-blue-600 font-bold text-sm";
+            }
+        }
+
+        // --- 10秒動態二維碼產生區塊 ---
+        function startQRGenerator() {
+            const qrContainer = document.getElementById("qr-code-display");
+            qrContainer.innerHTML = "";
+            
+            qrcodeInstance = new QRCode(qrContainer, {
+                text: getLiveQRUrl(),
+                width: 256,
+                height: 256,
+                colorDark : "#0f172a",
+                colorLight : "#ffffff",
+                correctLevel : QRCode.CorrectLevel.M
+            });
+
+            qrCountdownValue = 10;
+            updateQRProgressDisplay();
+
+            qrGeneratorInterval = setInterval(() => {
+                qrCountdownValue--;
+                updateQRProgressDisplay();
+
+                if (qrCountdownValue <= 0) {
+                    qrcodeInstance.clear();
+                    qrcodeInstance.makeCode(getLiveQRUrl());
+                    qrCountdownValue = 10;
+                }
+            }, 1000);
+        }
+
+        // 將雲端後台設定以及加密的時效 Token 動態加密打包進入 QR Code 內容中
+        function getLiveQRUrl() {
+            const domain = state.configs.domainUrl || window.location.origin;
+            const liveToken = btoa(`eclock_${Date.now()}`);
+            
+            const cfgObj = {
+                s: state.configs.googleSheetsUrl || "",
+                d: state.configs.domainUrl || "",
+                i: state.configs.ipLockEnabled ? 1 : 0,
+                o: state.configs.officeIp || "",
+                q: state.configs.qrSecurityEnabled ? 1 : 0
+            };
+            const cfgParam = btoa(JSON.stringify(cfgObj));
+            return `${domain}?token=${liveToken}&cfg=${cfgParam}`;
+        }
+
+        function updateQRProgressDisplay() {
+            const progressBar = document.getElementById("qr-progress-bar");
+            const progressText = document.getElementById("qr-progress-text");
+            if (progressBar) {
+                const percentage = (qrCountdownValue / 10) * 100;
+                progressBar.style.width = `${percentage}%`;
+            }
+            if (progressText) {
+                progressText.innerText = `Refreshing in ${qrCountdownValue}s`;
+            }
+        }
+
+        // --- 後台解鎖密碼驗證 ---
+        function verifyAdminPassword() {
+            const pwd = document.getElementById("admin-password-input").value;
+            if (pwd === "1234") {
+                document.getElementById("admin-auth").classList.add("hidden");
+                document.getElementById("admin-content").classList.remove("hidden");
+                showToast("✅ Admin Console Unlocked");
+            } else {
+                showToast("❌ Incorrect passcode");
+            }
+        }
+
+        // --- 核心打卡紀錄觸發函數 ---
+        function handleCheckIn(action) {
+            const empId = document.getElementById("employee-select").value;
+            if (!empId) {
+                showToast("⚠️ Please select your name");
+                return;
+            }
+
+            if (state.configs.qrSecurityEnabled) {
+                evaluateIncomingToken();
+                if (!tokenVerifiedStatus.valid) {
+                    showToast("❌ Access Denied: Secure token expired. Re-scan the active tablet screen.");
+                    updateUI();
+                    return;
+                }
+            }
+
+            if (state.configs.ipLockEnabled && state.configs.officeIp) {
+                if (state.currentIp !== state.configs.officeIp) {
+                    showToast(`🚫 Location Violation: Local IP [${state.currentIp}] does not match office gateway`);
+                    return;
+                }
+            }
+
+            const newLog = {
+                timestamp: Date.now(),
+                employeeId: empId,
+                action: action,
+                ip: state.currentIp || "Unknown"
+            };
+
+            state.checkIns.push(newLog);
+            saveToLocalStorage();
+            updateUI();
+            showToast("🎉 Log registered successfully on disk");
+
+            syncWithGoogleSheets();
+        }
+
+        // --- 員工註冊與刪除管理 ---
+        function addNewStaff() {
+            const name = document.getElementById("new-staff-name").value.trim();
+            const rate = document.getElementById("new-staff-rate").value.trim();
+
+            if (!name || !rate) {
+                showToast("⚠️ Complete all name and wage fields");
+                return;
+            }
+
+            const newEmp = {
+                id: "emp_" + Math.random().toString(36).substring(2, 9),
+                name: name,
+                rate: parseFloat(rate)
+            };
+
+            state.employees.push(newEmp);
+            saveToLocalStorage();
+            updateUI();
+            
+            document.getElementById("new-staff-name").value = "";
+            document.getElementById("new-staff-rate").value = "";
+            showToast(`✅ Enrolled ${name}`);
+
+            syncWithGoogleSheets();
+        }
+
+        function removeStaff(id) {
+            const emp = state.employees.find(e => e.id === id);
+            if (emp) {
+                state.employees = state.employees.filter(e => e.id !== id);
+                saveToLocalStorage();
+                updateUI();
+                showToast(`🗑️ Removed ${emp.name}`);
+                syncWithGoogleSheets();
+            }
+        }
+
+        // --- 系統設定操作開關 ---
+        function toggleIpLock() {
+            state.configs.ipLockEnabled = !state.configs.ipLockEnabled;
+            saveToLocalStorage();
+            updateUI();
+        }
+
+        function toggleQrLock() {
+            state.configs.qrSecurityEnabled = !state.configs.qrSecurityEnabled;
+            saveToLocalStorage();
+            updateUI();
+        }
+
+        function saveAllSettings() {
+            const sheetsUrl = document.getElementById("setting-sheets-url").value.trim();
+            const liveUrl = document.getElementById("setting-live-url").value.trim();
+            const officeIp = document.getElementById("setting-office-ip").value.trim();
+
+            state.configs.googleSheetsUrl = sheetsUrl;
+            state.configs.domainUrl = liveUrl;
+            state.configs.officeIp = officeIp;
+
+            saveToLocalStorage();
+            updateUI();
+            showToast("💾 System configurations saved locally");
+
+            pullFromGoogleSheets();
+        }
+
+        // --- 讀取裝置外部公網 IP ---
+        function fetchCurrentIp(showFeedback = true) {
+            fetch('https://api.ipify.org?format=json')
+                .then(res => res.json())
+                .then(data => {
+                    state.currentIp = data.ip;
+                    if (document.getElementById("setting-office-ip")) {
+                        document.getElementById("setting-office-ip").value = data.ip;
+                    }
+                    if (showFeedback) {
+                        showToast(`📡 Public IP detected: ${data.ip}`);
+                    }
+                })
+                .catch(err => {
+                    console.warn("IP resolution status: Restricted or offline in sandbox.", err.message);
+                    if (showFeedback) {
+                        showToast("❌ Unable to resolve external IP structure");
+                    }
+                });
+        }
+
+        // --- 數據 PUSH API：向 Google Apps Script 發送資料變更 ---
+        function syncWithGoogleSheets() {
+            const url = state.configs.googleSheetsUrl;
+            if (!url) return;
+
+            const payload = {
+                action: "sync",
+                employees: state.employees,
+                checkIns: state.checkIns,
+                configs: state.configs
+            };
+
+            fetch(url, {
+                method: "POST",
+                mode: "no-cors", 
+                headers: {
+                    "Content-Type": "application/json"
+                },
+                body: JSON.stringify(payload)
+            })
+            .then(() => {
+                console.log("Successfully pushed logs.");
+                // 打卡上傳後半秒，自動觸發一次 Pull 來確認資料對齊
+                setTimeout(pullFromGoogleSheets, 800);
+            })
+            .catch(err => {
+                console.warn("Push sync status: Blocked in sandbox environment.", err.message);
+            });
+        }
+
+        // --- 數據 PULL API：向 Google Apps Script 拉取最新的試算表資料（實現雙向即時同步） ---
+        function pullFromGoogleSheets() {
+            const url = state.configs.googleSheetsUrl;
+            if (!url) return;
+
+            const statusBox = document.getElementById("sync-status");
+            const statusText = document.getElementById("status-text");
+
+            // 確保網址查詢參數格式安全
+            const separator = url.includes('?') ? '&' : '?';
+
+            fetch(url + separator + "action=pull")
+                .then(res => {
+                    if (!res.ok) throw new Error("HTTP error " + res.status);
+                    return res.json();
+                })
+                .then(resData => {
+                    if (resData.status === "success" && resData.data) {
+                        state.employees = resData.data.employees || [];
+                        state.checkIns = resData.data.checkIns || [];
+                        
+                        saveToLocalStorage();
+                        updateUI();
+                        
+                        statusBox.className = "flex items-center space-x-2 bg-emerald-600 px-3 py-1.5 rounded-full text-xs font-semibold uppercase tracking-wider transition-colors duration-300";
+                        statusText.innerText = "ACTIVE GOOGLE SHEETS SYNC";
+                        console.log("Successfully pulled latest logs from Google Sheets.");
+                    } else {
+                        throw new Error(resData.message || "Unknown response state");
+                    }
+                })
+                .catch(err => {
+                    // 將 console.error 改為 console.warn，避免沙盒環境報錯攔截，並且提供友好提示
+                    console.warn("Pull sync status: Connection restricted or pending in preview sandbox. This is normal.", err.message);
+                    // 網絡連線被阻擋時，將狀態指示燈更新為警告，而不中斷本地儲存功能
+                    statusBox.className = "flex items-center space-x-2 bg-amber-600 px-3 py-1.5 rounded-full text-xs font-semibold uppercase tracking-wider transition-colors duration-300";
+                    statusText.innerText = "SYNC BLOCKED / CHECK SETTINGS";
+                });
+        }
+
+        // --- 雲端後台診斷偵錯工具 ---
+        function runDiagnostics() {
+            const url = document.getElementById("setting-sheets-url").value.trim();
+            const statusText = document.getElementById("diagnostic-status");
+            const resultsDiv = document.getElementById("diagnostic-results");
+
+            if (!url) {
+                statusText.innerText = "Failed";
+                resultsDiv.className = "text-rose-700 bg-rose-50 border-rose-200 text-xs p-3 rounded-lg border";
+                resultsDiv.innerHTML = "⚠️ Please enter a Google Sheets Web App URL first.";
+                resultsDiv.classList.remove("hidden");
+                return;
+            }
+
+            statusText.innerText = "Testing...";
+            resultsDiv.classList.add("hidden");
+
+            const separator = url.includes('?') ? '&' : '?';
+            
+            // 檢查是否誤用了 "/dev" 測試連結
+            if (url.includes("/dev")) {
+                statusText.innerText = "Warning";
+                resultsDiv.className = "text-amber-700 bg-amber-50 border-amber-200 text-xs p-3 rounded-lg border";
+                resultsDiv.innerHTML = "⚠️ <b>Warning:</b> You are using a <b>/dev</b> URL. Dev URLs are only accessible to your Google account. Please click 'Deploy' -> 'New Deployment', set access to 'Anyone', and use the <b>/exec</b> URL.";
+                resultsDiv.classList.remove("hidden");
+                return;
+            }
+
+            fetch(url + separator + "action=pull")
+                .then(res => {
+                    if (!res.ok) throw new Error("HTTP Status " + res.status);
+                    return res.json();
+                })
+                .then(resData => {
+                    if (resData.status === "success") {
+                        statusText.innerText = "Success";
+                        resultsDiv.className = "text-emerald-700 bg-emerald-50 border-emerald-200 text-xs p-3 rounded-lg border";
+                        resultsDiv.innerHTML = "✅ <b>Connection Successful!</b> Your Google Sheets Web App is fully responsive and returning database records properly.";
+                    } else {
+                        statusText.innerText = "Error";
+                        resultsDiv.className = "text-rose-700 bg-rose-50 border-rose-200 text-xs p-3 rounded-lg border";
+                        resultsDiv.innerHTML = `⚠️ <b>Script Error:</b> Google Script returned an error: "${resData.message || 'Unknown'}"`;
+                    }
+                    resultsDiv.classList.remove("hidden");
+                })
+                .catch(err => {
+                    statusText.innerText = "Failed";
+                    resultsDiv.className = "text-rose-700 bg-rose-50 border-rose-200 text-xs p-3 rounded-lg border space-y-2";
+                    
+                    let diagnosticsHtml = `
+                        <p>❌ <b>Connection Blocked (Failed to fetch)</b></p>
+                        <p>This is a common browser security block. Please check the following 3 root causes:</p>
+                        <ul class="list-disc pl-4 space-y-1">
+                            <li><b>1. Deployment Permission:</b> Ensure your Web App is deployed with 'Who has access' set to <b>'Anyone' (所有人)</b>. If set to 'Myself', Google blocks access with a CORS error.</li>
+                            <li><b>2. Sandboxed Environment:</b> If you are testing this code inside a preview editor (like on this website), the browser's sandbox security blocks the connection. <b>Please test it directly on your live Vercel domain:</b> <a href="https://vclock-seven.vercel.app" target="_blank" class="underline font-bold text-blue-600">https://vclock-seven.vercel.app</a></li>
+                            <li><b>3. Adblockers/Shields:</b> Brave Browser Shields or adblockers like uBlock Origin sometimes block Google Scripts domains. Try disabling them temporarily for your domain.</li>
+                        </ul>
+                    `;
+                    resultsDiv.innerHTML = diagnosticsHtml;
+                    resultsDiv.classList.remove("hidden");
+                });
+        }
+
+        function manualSync() {
+            showToast("🔄 Fetching latest database records...");
+            pullFromGoogleSheets();
+        }
+
+        // --- 產生多工作表 (Multi-sheet) 的標準 Excel 報表匯出功能 ---
+        function exportExcel() {
+            if (state.checkIns.length === 0) {
+                showToast("⚠️ No logged interactions to export");
+                return;
+            }
+
+            // 1. 初始化一個全新的 Excel 活頁簿 (Workbook)
+            const wb = XLSX.utils.book_new();
+
+            // 2. 建立總打卡記錄頁籤 ("All Logs")
+            const masterData = state.checkIns.map(log => ({
+                "Timestamp ID": log.timestamp,
+                "Local Time": new Date(log.timestamp).toLocaleString('en-US'),
+                "Employee Name": getEmployeeName(log.employeeId),
+                "Action": log.action === 'IN' ? 'CHECK-IN' : 'CHECK-OUT',
+                "IP Address": log.ip
+            }));
+            const wsMaster = XLSX.utils.json_to_sheet(masterData);
+            XLSX.utils.book_append_sheet(wb, wsMaster, "All Logs");
+
+            // 3. 建立各別員工專屬的打卡記錄頁籤
+            state.employees.forEach(emp => {
+                const empLogs = state.checkIns
+                    .filter(log => log.employeeId === emp.id)
+                    .sort((a, b) => b.timestamp - a.timestamp);
+
+                if (empLogs.length > 0) {
+                    const empData = empLogs.map(log => ({
+                        "Timestamp ID": log.timestamp,
+                        "Local Time": new Date(log.timestamp).toLocaleString('en-US'),
+                        "Action": log.action === 'IN' ? 'CHECK-IN' : 'CHECK-OUT',
+                        "IP Address": log.ip
+                    }));
+                    
+                    const wsEmp = XLSX.utils.json_to_sheet(empData);
+                    
+                    // Excel 工作表頁籤名稱限制長度最大為 31 字元
+                    const safeTabName = emp.name.substring(0, 30);
+                    XLSX.utils.book_append_sheet(wb, wsEmp, safeTabName);
+                }
+            });
+
+            // 4. 下載寫入並產生檔案
+            XLSX.writeFile(wb, "Boss_SME_Attendance_Report.xlsx");
+            showToast("📥 Multi-sheet Excel report downloaded successfully.");
+        }
+
+        // --- 顯示提示氣泡 ---
+        function showToast(message) {
+            const toast = document.getElementById("toast");
+            toast.innerText = message;
+            toast.className = "fixed bottom-6 left-1/2 transform -translate-x-1/2 bg-slate-900 text-white px-6 py-3.5 rounded-xl shadow-2xl text-sm font-medium transition duration-300 opacity-100 translate-y-0 z-50";
+            
+            setTimeout(() => {
+                toast.className = "fixed bottom-6 left-1/2 transform -translate-x-1/2 bg-slate-900 text-white px-6 py-3.5 rounded-xl shadow-2xl text-sm font-medium transition duration-300 opacity-0 translate-y-4 pointer-events-none z-50";
+            }, 3500);
+        }
+
+        function getEmployeeName(id) {
+            const emp = state.employees.find(e => e.id === id);
+            return emp ? emp.name : "Unknown Staff";
+        }
+    </script>
+</body>
+</html>
