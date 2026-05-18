@@ -1,0 +1,898 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Boss Payroll & SME Attendance</title>
+    <!-- Tailwind CSS CDN -->
+    <script src="https://cdn.tailwindcss.com"></script>
+    <!-- QRCode JS Library -->
+    <script src="https://cdnjs.cloudflare.com/ajax/libs/qrcodejs/1.0.0/qrcode.min.js"></script>
+    <style>
+        @import url('https://fonts.googleapis.com/css2?family=Inter:wght=300;400;500;600;700&display=swap');
+        body {
+            font-family: 'Inter', sans-serif;
+        }
+    </style>
+</head>
+<body class="bg-slate-50 text-slate-800 min-h-screen flex flex-col">
+
+    <!-- Header Navigation -->
+    <header class="bg-blue-600 text-white shadow-md">
+        <div class="max-w-6xl mx-auto px-4 py-3 flex justify-between items-center flex-wrap gap-2">
+            <div class="flex items-center space-x-3">
+                <span class="text-2xl">📊</span>
+                <h1 class="text-xl font-bold tracking-tight">Boss Payroll</h1>
+            </div>
+            
+            <!-- Sync Status Indicator -->
+            <div id="sync-status" class="flex items-center space-x-2 bg-red-700 px-3 py-1.5 rounded-full text-xs font-semibold uppercase tracking-wider transition-colors duration-300">
+                <span class="w-2 h-2 rounded-full bg-white animate-pulse" id="status-dot"></span>
+                <span id="status-text">OFFLINE MEMORY</span>
+            </div>
+            
+            <!-- Tab Controls -->
+            <nav class="flex space-x-1">
+                <button onclick="switchTab('qrscreen')" id="btn-qrscreen" class="px-4 py-2 rounded-lg text-sm font-medium bg-blue-700 text-white transition">Entrance Display</button>
+                <button onclick="switchTab('checkin')" id="btn-checkin" class="px-4 py-2 rounded-lg text-sm font-medium text-blue-100 hover:bg-blue-500 transition">Check-In Lobby</button>
+                <button onclick="switchTab('admin')" id="btn-admin" class="px-4 py-2 rounded-lg text-sm font-medium text-blue-100 hover:bg-blue-500 transition">Admin Panel</button>
+            </nav>
+        </div>
+    </header>
+
+    <main class="flex-grow max-w-4xl mx-auto w-full p-4">
+        
+        <!-- 1. Entrance QR Display Tab (Tablet/Wall Mode) -->
+        <section id="tab-qrscreen" class="space-y-6">
+            <div class="bg-white rounded-2xl shadow-sm border border-slate-100 p-8 text-center max-w-lg mx-auto space-y-6">
+                <div class="space-y-2">
+                    <span class="text-blue-600 text-xs font-bold uppercase tracking-widest bg-blue-50 px-3 py-1 rounded-full">Secure Live Gateway</span>
+                    <h2 class="text-2xl font-black text-slate-900">Scan to Clock In / Out</h2>
+                    <p class="text-slate-500 text-sm max-w-sm mx-auto">This QR code rotates dynamically every 10 seconds. Static screenshots will fail validation checks.</p>
+                </div>
+
+                <!-- QR Container -->
+                <div class="flex flex-col items-center justify-center py-4 bg-slate-50 rounded-2xl border border-dashed border-slate-200">
+                    <div id="qr-code-display" class="p-4 bg-white rounded-xl shadow-sm"></div>
+                </div>
+
+                <!-- Progress Tracker -->
+                <div class="space-y-2 max-w-xs mx-auto">
+                    <div class="flex justify-between text-xs font-semibold text-slate-400">
+                        <span>Dynamic Encryption Token</span>
+                        <span id="qr-progress-text">Refreshing in 10s</span>
+                    </div>
+                    <div class="w-full bg-slate-100 h-2 rounded-full overflow-hidden">
+                        <div id="qr-progress-bar" class="bg-blue-600 h-full w-full transition-all duration-1000 ease-linear"></div>
+                    </div>
+                </div>
+            </div>
+        </section>
+
+        <!-- 2. Check-In Tab (Mobile/Client Interface) -->
+        <section id="tab-checkin" class="hidden space-y-6">
+            <!-- QR Verification Banner Status -->
+            <div id="verification-banner" class="hidden rounded-2xl p-4 border flex items-center space-x-3">
+                <span id="verification-icon" class="text-2xl"></span>
+                <div>
+                    <h4 id="verification-title" class="font-bold text-sm"></h4>
+                    <p id="verification-desc" class="text-xs"></p>
+                </div>
+            </div>
+
+            <div class="bg-white rounded-2xl shadow-sm border border-slate-100 p-6 text-center space-y-6">
+                <!-- Live Clock -->
+                <div class="space-y-1">
+                    <div id="live-date" class="text-sm font-medium text-slate-500">Monday, May 18, 2026</div>
+                    <div id="live-time" class="text-5xl font-extrabold text-slate-950 tracking-tight tabular-nums">16:07:00</div>
+                </div>
+
+                <!-- Select Employee for Check-In -->
+                <div class="max-w-md mx-auto space-y-4 pt-4">
+                    <label class="block text-sm font-semibold text-slate-700 text-left">Select Your Name:</label>
+                    <select id="employee-select" onchange="updateButtonStates()" class="w-full bg-slate-50 border border-slate-200 rounded-xl px-4 py-3.5 focus:outline-none focus:ring-2 focus:ring-blue-500 text-slate-800 font-medium">
+                        <option value="">-- Select Employee --</option>
+                    </select>
+
+                    <!-- IP Lock Alert -->
+                    <div id="ip-lock-banner" class="hidden text-xs text-amber-700 bg-amber-50 border border-amber-200 rounded-lg p-3 text-left">
+                        🔒 Office Wi-Fi security is enabled. Ensure your device is connected to the authorized network.
+                    </div>
+
+                    <!-- Action Buttons -->
+                    <div class="grid grid-cols-2 gap-4 pt-2">
+                        <button id="btn-action-in" onclick="handleCheckIn('IN')" disabled class="bg-slate-200 text-slate-400 font-semibold py-4 rounded-xl cursor-not-allowed flex flex-col items-center justify-center space-y-1 opacity-50 transition duration-200">
+                            <span class="text-2xl">☀️</span>
+                            <span>Clock In (IN)</span>
+                        </button>
+                        <button id="btn-action-out" onclick="handleCheckIn('OUT')" disabled class="bg-slate-200 text-slate-400 font-semibold py-4 rounded-xl cursor-not-allowed flex flex-col items-center justify-center space-y-1 opacity-50 transition duration-200">
+                            <span class="text-2xl">🌙</span>
+                            <span>Clock Out (OUT)</span>
+                        </button>
+                    </div>
+                </div>
+            </div>
+
+            <!-- Recent 5 Logs Feed -->
+            <div class="bg-white rounded-2xl shadow-sm border border-slate-100 p-6 space-y-4">
+                <h3 class="text-sm font-bold text-slate-400 uppercase tracking-wider">Recent Activity Logs</h3>
+                <div id="recent-logs" class="divide-y divide-slate-100">
+                    <div class="py-3 text-slate-400 text-center text-sm">No check-in records found</div>
+                </div>
+            </div>
+        </section>
+
+        <!-- 3. Admin Panel Tab -->
+        <section id="tab-admin" class="hidden space-y-6">
+            <!-- Passcode Verification Interface -->
+            <div id="admin-auth" class="bg-white rounded-2xl shadow-sm border border-slate-100 p-8 max-w-md mx-auto text-center space-y-4">
+                <span class="text-4xl">🔑</span>
+                <h3 class="text-lg font-bold">Manager Console Authorization</h3>
+                <input type="password" id="admin-password-input" placeholder="Enter Secure Passcode" class="w-full bg-slate-50 border border-slate-200 rounded-xl px-4 py-3 text-center focus:outline-none focus:ring-2 focus:ring-blue-500">
+                <button onclick="verifyAdminPassword()" class="w-full bg-blue-600 hover:bg-blue-500 text-white font-semibold py-3 rounded-xl transition">Unlock Terminal</button>
+            </div>
+
+            <!-- Admin Active Dashboard -->
+            <div id="admin-content" class="hidden space-y-6">
+                <!-- Subsection Toggles -->
+                <div class="flex border-b border-slate-200">
+                    <button onclick="switchAdminSubTab('staff')" id="sub-btn-staff" class="px-5 py-3 border-b-2 border-blue-600 text-blue-600 font-bold text-sm">Employee & Payroll</button>
+                    <button onclick="switchAdminSubTab('settings')" id="sub-btn-settings" class="px-5 py-3 border-b-2 border-transparent text-slate-500 hover:text-slate-800 font-medium text-sm">System & Sync Settings</button>
+                </div>
+
+                <!-- Employee List & Payroll Config Section -->
+                <div id="admin-sub-staff" class="space-y-6">
+                    <!-- New Worker Addition Portal -->
+                    <div class="bg-white rounded-2xl shadow-sm border border-slate-100 p-6 space-y-4">
+                        <h3 class="text-base font-bold text-slate-800">Enroll New Employee</h3>
+                        <div class="grid grid-cols-1 md:grid-cols-3 gap-4">
+                            <input type="text" id="new-staff-name" placeholder="Employee Name (e.g. Alfred)" class="bg-slate-50 border border-slate-200 rounded-xl px-4 py-3 text-sm focus:outline-none focus:ring-2 focus:ring-blue-500">
+                            <input type="number" id="new-staff-rate" placeholder="Base Salary Rate ($/hour)" class="bg-slate-50 border border-slate-200 rounded-xl px-4 py-3 text-sm focus:outline-none focus:ring-2 focus:ring-blue-500">
+                            <button onclick="addNewStaff()" class="bg-blue-600 hover:bg-blue-500 text-white font-bold py-3 rounded-xl text-sm transition">Add Employee</button>
+                        </div>
+                    </div>
+
+                    <!-- Active Employees Management Roster -->
+                    <div class="bg-white rounded-2xl shadow-sm border border-slate-100 overflow-hidden">
+                        <div class="px-6 py-4 border-b border-slate-100 flex justify-between items-center">
+                            <h3 class="font-bold text-slate-800">Registered Employee Directory</h3>
+                            <button onclick="exportExcel()" class="bg-emerald-600 hover:bg-emerald-500 text-white text-xs font-bold px-3 py-1.5 rounded-lg transition">Export Local Logs (.csv)</button>
+                        </div>
+                        <div class="overflow-x-auto">
+                            <table class="w-full text-left border-collapse">
+                                <thead>
+                                    <tr class="bg-slate-50 text-slate-400 text-xs font-bold uppercase tracking-wider">
+                                        <th class="px-6 py-3">Employee Name</th>
+                                        <th class="px-6 py-3">Salary Matrix</th>
+                                        <th class="px-6 py-3 text-right">Actions</th>
+                                    </tr>
+                                </thead>
+                                <tbody id="staff-table-body" class="divide-y divide-slate-100 text-sm">
+                                    <tr>
+                                        <td colspan="3" class="px-6 py-8 text-center text-slate-400">No registered employees.</td>
+                                    </tr>
+                                </tbody>
+                            </table>
+                        </div>
+                    </div>
+                </div>
+
+                <!-- Configuration Management Panel -->
+                <div id="admin-sub-settings" class="hidden space-y-6">
+                    <div class="bg-white rounded-2xl shadow-sm border border-slate-100 p-6 space-y-6">
+                        
+                        <!-- 1. Web App API Endpoint -->
+                        <div class="space-y-2">
+                            <label class="block text-sm font-bold text-slate-800">1. GOOGLE SHEETS WEB APP URL</label>
+                            <p class="text-xs text-slate-400">Specify the live endpoint deployed from Google Apps Script:</p>
+                            <input type="text" id="setting-sheets-url" placeholder="https://script.google.com/macros/s/.../exec" class="w-full bg-slate-50 border border-slate-200 rounded-xl px-4 py-3 text-sm focus:outline-none focus:ring-2 focus:ring-blue-500">
+                        </div>
+
+                        <!-- 2. Host Target Endpoint -->
+                        <div class="space-y-2">
+                            <label class="block text-sm font-bold text-slate-800">2. APP LIVE URL (DOMAIN)</label>
+                            <p class="text-xs text-slate-400">Target URL required for local binding and dynamic scan redirects:</p>
+                            <input type="text" id="setting-live-url" placeholder="https://vclock-seven.vercel.app" class="w-full bg-slate-50 border border-slate-200 rounded-xl px-4 py-3 text-sm focus:outline-none focus:ring-2 focus:ring-blue-500">
+                        </div>
+
+                        <!-- 3. Token Check Settings -->
+                        <div class="space-y-3 pt-2 border-t border-slate-100">
+                            <div class="flex items-center justify-between">
+                                <label class="text-sm font-bold text-slate-800">3. DYNAMIC 10S QR SECURITY LOCK</label>
+                                <button id="qr-toggle" onclick="toggleQrLock()" class="w-12 h-6 rounded-full bg-slate-200 relative transition-colors duration-300 focus:outline-none">
+                                    <span class="w-5 h-5 rounded-full bg-white absolute top-0.5 left-0.5 shadow transition-transform duration-300" id="qr-toggle-dot"></span>
+                                </button>
+                            </div>
+                            <p class="text-xs text-slate-400">Enforce attendance registration strictly through scanning the live 10-second rotating QR code at the entrance.</p>
+                        </div>
+
+                        <!-- 4. Wi-Fi Security Lock Settings -->
+                        <div class="space-y-3 pt-4 border-t border-slate-100">
+                            <div class="flex items-center justify-between">
+                                <label class="text-sm font-bold text-slate-800">4. WI-FI IP LOCK SECURITY</label>
+                                <button id="ip-toggle" onclick="toggleIpLock()" class="w-12 h-6 rounded-full bg-slate-200 relative transition-colors duration-300 focus:outline-none">
+                                    <span class="w-5 h-5 rounded-full bg-white absolute top-0.5 left-0.5 shadow transition-transform duration-300" id="ip-toggle-dot"></span>
+                                </button>
+                            </div>
+                            <p class="text-xs text-slate-400">Restricts user check-in capabilities to devices connected to the designated company IP address.</p>
+                            <div class="grid grid-cols-1 md:grid-cols-2 gap-4">
+                                <input type="text" id="setting-office-ip" placeholder="Target External IP (e.g. 123.45.67.89)" class="bg-slate-50 border border-slate-200 rounded-xl px-4 py-3 text-sm focus:outline-none focus:ring-2 focus:ring-blue-500">
+                                <button onclick="fetchCurrentIp()" class="bg-slate-100 hover:bg-slate-200 text-slate-700 font-bold py-3 rounded-xl text-sm transition">Detect Current Network IP</button>
+                            </div>
+                        </div>
+
+                        <!-- Config Saves -->
+                        <div class="pt-6 border-t border-slate-100 flex flex-col md:flex-row gap-4">
+                            <button onclick="saveAllSettings()" class="flex-grow bg-blue-600 hover:bg-blue-500 text-white font-bold py-4 rounded-xl shadow-md transition text-center">
+                                SAVE ALL CONFIGURATIONS
+                            </button>
+                            <button onclick="manualSync()" class="bg-slate-100 hover:bg-slate-200 text-slate-700 font-bold px-6 py-4 rounded-xl transition">
+                                Force Database Sync 🔄
+                            </button>
+                        </div>
+
+                    </div>
+                </div>
+
+            </div>
+        </section>
+
+    </main>
+
+    <!-- Custom Notification Container -->
+    <div id="toast" class="fixed bottom-6 left-1/2 transform -translate-x-1/2 bg-slate-900 text-white px-6 py-3.5 rounded-xl shadow-2xl text-sm font-medium transition duration-300 opacity-0 translate-y-4 pointer-events-none z-50">
+        Status Toast Alert
+    </div>
+
+    <footer class="bg-slate-100 border-t border-slate-200 py-6 text-center text-xs text-slate-400 mt-12 font-medium">
+        &copy; 2026 Boss Payroll System. Google Sheets Dynamic API Integration.
+    </footer>
+
+    <script>
+        // --- State Matrix Setup ---
+        let state = {
+            employees: [],
+            checkIns: [],
+            configs: {
+                googleSheetsUrl: "",
+                domainUrl: "",
+                ipLockEnabled: false,
+                officeIp: "",
+                qrSecurityEnabled: true
+            },
+            currentIp: ""
+        };
+
+        // QR Rotation Variables
+        let qrGeneratorInterval = null;
+        let qrCountdownValue = 10;
+        let qrcodeInstance = null;
+        let tokenVerifiedStatus = { valid: false, reason: "No live token verified" };
+
+        // App Initializer
+        window.onload = function() {
+            loadFromLocalStorage();
+            evaluateIncomingToken();
+
+            // Flow Routing Strategy
+            const urlParams = new URLSearchParams(window.location.search);
+            const token = urlParams.get('token');
+            if (token) {
+                switchTab('checkin');
+            } else {
+                switchTab('qrscreen');
+            }
+            
+            setInterval(updateTime, 1000);
+            updateTime();
+
+            fetchCurrentIp(false);
+            
+            // First Pull
+            pullFromGoogleSheets();
+
+            // Set background loop to pull fresh logs every 15 seconds
+            setInterval(pullFromGoogleSheets, 15000);
+        };
+
+        // URL Parser for Verification & Auto-Config
+        function evaluateIncomingToken() {
+            const urlParams = new URLSearchParams(window.location.search);
+            const token = urlParams.get('token');
+            tokenVerifiedStatus = verifyToken(token);
+
+            const cfg = urlParams.get('cfg');
+            if (cfg) {
+                try {
+                    const decoded = JSON.parse(atob(cfg));
+                    if (decoded && decoded.s) {
+                        state.configs.googleSheetsUrl = decoded.s;
+                        state.configs.domainUrl = decoded.d || state.configs.domainUrl;
+                        state.configs.ipLockEnabled = decoded.i === 1;
+                        state.configs.officeIp = decoded.o || state.configs.officeIp;
+                        state.configs.qrSecurityEnabled = decoded.q === 1;
+                        saveToLocalStorage();
+                    }
+                } catch (e) {
+                    console.error("Auto-config payload parsing error:", e);
+                }
+            }
+        }
+
+        // Base64 Token Validator
+        function verifyToken(token) {
+            if (!token) {
+                return { valid: false, reason: "Direct access: Scanned QR token missing" };
+            }
+            try {
+                const decoded = atob(token);
+                if (!decoded.startsWith("eclock_")) {
+                    return { valid: false, reason: "Malformed secure code structure" };
+                }
+                const timestamp = parseInt(decoded.split("_")[1]);
+                const timeDifference = Math.abs(Date.now() - timestamp) / 1000;
+
+                if (timeDifference <= 15) {
+                    return { valid: true, elapsed: Math.round(timeDifference) };
+                } else {
+                    return { valid: false, reason: `Expired (${Math.round(timeDifference)}s ago). Re-scan live screen.` };
+                }
+            } catch (e) {
+                return { valid: false, reason: "Cryptographic token error" };
+            }
+        }
+
+        // --- Persistent Engine ---
+        function loadFromLocalStorage() {
+            const stored = localStorage.getItem("boss_payroll_state");
+            if (stored) {
+                try {
+                    state = JSON.parse(stored);
+                } catch (e) {
+                    console.error("Local persistence load error:", e);
+                }
+            }
+        }
+
+        function saveToLocalStorage() {
+            localStorage.setItem("boss_payroll_state", JSON.stringify(state));
+        }
+
+        // --- System Clock ---
+        function updateTime() {
+            const now = new Date();
+            const timeOptions = { hour: '2-digit', minute: '2-digit', second: '2-digit', hour12: false };
+            const dateOptions = { year: 'numeric', month: 'long', day: 'numeric', weekday: 'long' };
+            
+            document.getElementById("live-time").innerText = now.toLocaleTimeString('en-US', timeOptions);
+            document.getElementById("live-date").innerText = now.toLocaleDateString('en-US', dateOptions);
+        }
+
+        // --- UI Dynamic Rendering ---
+        function updateUI() {
+            const select = document.getElementById("employee-select");
+            const currentSelected = select.value;
+            
+            select.innerHTML = '<option value="">-- Select Employee --</option>';
+            state.employees.forEach(emp => {
+                const opt = document.createElement("option");
+                opt.value = emp.id;
+                opt.innerText = emp.name;
+                if (emp.id === currentSelected) {
+                    opt.selected = true;
+                }
+                select.appendChild(opt);
+            });
+
+            const logContainer = document.getElementById("recent-logs");
+            if (state.checkIns.length === 0) {
+                logContainer.innerHTML = '<div class="py-4 text-slate-400 text-center text-sm">No check-in records found</div>';
+            } else {
+                const sortedLogs = [...state.checkIns].sort((a, b) => b.timestamp - a.timestamp).slice(0, 5);
+                logContainer.innerHTML = sortedLogs.map(log => {
+                    const empName = getEmployeeName(log.employeeId);
+                    const dateStr = new Date(log.timestamp).toLocaleTimeString('en-US', {hour: '2-digit', minute:'2-digit'});
+                    const colorClass = log.action === 'IN' ? 'bg-emerald-100 text-emerald-800' : 'bg-rose-100 text-rose-800';
+                    return `
+                        <div class="flex justify-between items-center py-3">
+                            <div class="flex items-center space-x-3">
+                                <span class="text-base font-bold text-slate-700">${empName}</span>
+                                <span class="text-xs text-slate-400">${new Date(log.timestamp).toLocaleDateString('en-US')} ${dateStr}</span>
+                            </div>
+                            <span class="px-2.5 py-1 rounded-md text-xs font-bold ${colorClass}">${log.action === 'IN' ? 'CHECK-IN' : 'CHECK-OUT'}</span>
+                        </div>
+                    `;
+                }).join('');
+            }
+
+            const tableBody = document.getElementById("staff-table-body");
+            if (state.employees.length === 0) {
+                tableBody.innerHTML = '<tr><td colspan="3" class="px-6 py-8 text-center text-slate-400">No registered employees.</td></tr>';
+            } else {
+                tableBody.innerHTML = state.employees.map(emp => `
+                    <tr class="hover:bg-slate-50">
+                        <td class="px-6 py-4 font-bold text-slate-700">${emp.name}</td>
+                        <td class="px-6 py-4 text-slate-500">$ ${emp.rate} / hour</td>
+                        <td class="px-6 py-4 text-right">
+                            <button onclick="removeStaff('${emp.id}')" class="text-rose-600 hover:text-rose-800 font-bold text-xs">Remove</button>
+                        </td>
+                    </tr>
+                `).join('');
+            }
+
+            document.getElementById("setting-sheets-url").value = state.configs.googleSheetsUrl || "";
+            document.getElementById("setting-live-url").value = state.configs.domainUrl || "";
+            document.getElementById("setting-office-ip").value = state.configs.officeIp || "";
+            
+            const ipToggle = document.getElementById("ip-toggle");
+            const ipToggleDot = document.getElementById("ip-toggle-dot");
+            const ipBanner = document.getElementById("ip-lock-banner");
+            
+            if (state.configs.ipLockEnabled) {
+                ipToggle.className = "w-12 h-6 rounded-full bg-blue-600 relative transition-colors duration-300 focus:outline-none";
+                ipToggleDot.style.transform = "translateX(24px)";
+                ipBanner.classList.remove("hidden");
+            } else {
+                ipToggle.className = "w-12 h-6 rounded-full bg-slate-200 relative transition-colors duration-300 focus:outline-none";
+                ipToggleDot.style.transform = "translateX(0px)";
+                ipBanner.classList.add("hidden");
+            }
+
+            const qrToggle = document.getElementById("qr-toggle");
+            const qrToggleDot = document.getElementById("qr-toggle-dot");
+            if (state.configs.qrSecurityEnabled) {
+                qrToggle.className = "w-12 h-6 rounded-full bg-blue-600 relative transition-colors duration-300 focus:outline-none";
+                qrToggleDot.style.transform = "translateX(24px)";
+            } else {
+                qrToggle.className = "w-12 h-6 rounded-full bg-slate-200 relative transition-colors duration-300 focus:outline-none";
+                qrToggleDot.style.transform = "translateX(0px)";
+            }
+
+            const verifyBanner = document.getElementById("verification-banner");
+            const verifyIcon = document.getElementById("verification-icon");
+            const verifyTitle = document.getElementById("verification-title");
+            const verifyDesc = document.getElementById("verification-desc");
+
+            if (state.configs.qrSecurityEnabled) {
+                verifyBanner.classList.remove("hidden");
+                if (tokenVerifiedStatus.valid) {
+                    verifyBanner.className = "rounded-2xl p-4 border border-emerald-200 bg-emerald-50 text-emerald-800 flex items-center space-x-3";
+                    verifyIcon.innerText = "✅";
+                    verifyTitle.innerText = "Dynamic Scan Token Verified";
+                    verifyDesc.innerText = `You scanned a live QR Code. (Verified in ${tokenVerifiedStatus.elapsed}s). Ready to log.`;
+                } else {
+                    verifyBanner.className = "rounded-2xl p-4 border border-rose-200 bg-rose-50 text-rose-800 flex items-center space-x-3";
+                    verifyIcon.innerText = "⚠️";
+                    verifyTitle.innerText = "QR Code Security Failed";
+                    verifyDesc.innerText = tokenVerifiedStatus.reason;
+                }
+            } else {
+                verifyBanner.classList.add("hidden");
+            }
+
+            const statusBox = document.getElementById("sync-status");
+            const statusText = document.getElementById("status-text");
+            if (state.configs.googleSheetsUrl) {
+                statusBox.className = "flex items-center space-x-2 bg-emerald-600 px-3 py-1.5 rounded-full text-xs font-semibold uppercase tracking-wider transition-colors duration-300";
+                statusText.innerText = "ACTIVE GOOGLE SHEETS SYNC";
+            } else {
+                statusBox.className = "flex items-center space-x-2 bg-red-700 px-3 py-1.5 rounded-full text-xs font-semibold uppercase tracking-wider transition-colors duration-300";
+                statusText.innerText = "OFFLINE MEMORY";
+            }
+
+            // Maintain correct button states based on selection
+            updateButtonStates();
+        }
+
+        // --- Logic: Lock Buttons State Based on Last Clock State ---
+        function updateButtonStates() {
+            const empId = document.getElementById("employee-select").value;
+            const btnIn = document.getElementById("btn-action-in");
+            const btnOut = document.getElementById("btn-action-out");
+
+            // Disable both buttons if QR is invalid (when QR lock is enabled)
+            if (state.configs.qrSecurityEnabled && !tokenVerifiedStatus.valid) {
+                setButtonDisabled(btnIn, true, 'emerald');
+                setButtonDisabled(btnOut, true, 'rose');
+                return;
+            }
+
+            // Disable both if no employee is selected
+            if (!empId) {
+                setButtonDisabled(btnIn, true, 'emerald');
+                setButtonDisabled(btnOut, true, 'rose');
+                return;
+            }
+
+            // Find last check-in log for this specific employee
+            const empLogs = state.checkIns
+                .filter(log => log.employeeId === empId)
+                .sort((a, b) => b.timestamp - a.timestamp);
+
+            const latestLog = empLogs[0];
+
+            if (!latestLog || latestLog.action === 'OUT') {
+                // If never clocked in, or clocked out last, allow only IN
+                setButtonDisabled(btnIn, false, 'emerald');
+                setButtonDisabled(btnOut, true, 'rose');
+            } else {
+                // If currently clocked in, allow only OUT
+                setButtonDisabled(btnIn, true, 'emerald');
+                setButtonDisabled(btnOut, false, 'rose');
+            }
+        }
+
+        function setButtonDisabled(btn, disabled, type) {
+            btn.disabled = disabled;
+            if (disabled) {
+                btn.className = "bg-slate-200 text-slate-400 font-semibold py-4 rounded-xl cursor-not-allowed flex flex-col items-center justify-center space-y-1 transition duration-200 opacity-40";
+            } else {
+                if (type === 'emerald') {
+                    btn.className = "bg-emerald-600 hover:bg-emerald-500 active:bg-emerald-700 text-white font-semibold py-4 rounded-xl shadow-md transition transform active:scale-95 flex flex-col items-center justify-center space-y-1";
+                } else {
+                    btn.className = "bg-rose-600 hover:bg-rose-500 active:bg-rose-700 text-white font-semibold py-4 rounded-xl shadow-md transition transform active:scale-95 flex flex-col items-center justify-center space-y-1";
+                }
+            }
+        }
+
+        // --- Navigation Logic ---
+        function switchTab(tab) {
+            document.getElementById("tab-checkin").classList.add("hidden");
+            document.getElementById("tab-qrscreen").classList.add("hidden");
+            document.getElementById("tab-admin").classList.add("hidden");
+            
+            document.getElementById("btn-checkin").className = "px-4 py-2 rounded-lg text-sm font-medium text-blue-100 hover:bg-blue-500 transition";
+            document.getElementById("btn-qrscreen").className = "px-4 py-2 rounded-lg text-sm font-medium text-blue-100 hover:bg-blue-500 transition";
+            document.getElementById("btn-admin").className = "px-4 py-2 rounded-lg text-sm font-medium text-blue-100 hover:bg-blue-500 transition";
+
+            if (qrGeneratorInterval) {
+                clearInterval(qrGeneratorInterval);
+                qrGeneratorInterval = null;
+            }
+
+            if (tab === 'checkin') {
+                document.getElementById("tab-checkin").classList.remove("hidden");
+                document.getElementById("btn-checkin").className = "px-4 py-2 rounded-lg text-sm font-medium bg-blue-700 text-white transition";
+                evaluateIncomingToken();
+                updateUI();
+            } else if (tab === 'qrscreen') {
+                document.getElementById("tab-qrscreen").classList.remove("hidden");
+                document.getElementById("btn-qrscreen").className = "px-4 py-2 rounded-lg text-sm font-medium bg-blue-700 text-white transition";
+                startQRGenerator();
+            } else {
+                document.getElementById("tab-admin").classList.remove("hidden");
+                document.getElementById("btn-admin").className = "px-4 py-2 rounded-lg text-sm font-medium bg-blue-700 text-white transition";
+            }
+        }
+
+        function switchAdminSubTab(subTab) {
+            document.getElementById("admin-sub-staff").classList.add("hidden");
+            document.getElementById("admin-sub-settings").classList.add("hidden");
+            document.getElementById("sub-btn-staff").className = "px-5 py-3 border-b-2 border-transparent text-slate-500 hover:text-slate-800 font-medium text-sm";
+            document.getElementById("sub-btn-settings").className = "px-5 py-3 border-b-2 border-transparent text-slate-500 hover:text-slate-800 font-medium text-sm";
+
+            if (subTab === 'staff') {
+                document.getElementById("admin-sub-staff").classList.remove("hidden");
+                document.getElementById("sub-btn-staff").className = "px-5 py-3 border-b-2 border-blue-600 text-blue-600 font-bold text-sm";
+            } else {
+                document.getElementById("admin-sub-settings").classList.remove("hidden");
+                document.getElementById("sub-btn-settings").className = "px-5 py-3 border-b-2 border-blue-600 text-blue-600 font-bold text-sm";
+            }
+        }
+
+        // --- Entrance Dynamic Generator Block ---
+        function startQRGenerator() {
+            const qrContainer = document.getElementById("qr-code-display");
+            qrContainer.innerHTML = "";
+            
+            qrcodeInstance = new QRCode(qrContainer, {
+                text: getLiveQRUrl(),
+                width: 256,
+                height: 256,
+                colorDark : "#0f172a",
+                colorLight : "#ffffff",
+                correctLevel : QRCode.CorrectLevel.M
+            });
+
+            qrCountdownValue = 10;
+            updateQRProgressDisplay();
+
+            qrGeneratorInterval = setInterval(() => {
+                qrCountdownValue--;
+                updateQRProgressDisplay();
+
+                if (qrCountdownValue <= 0) {
+                    qrcodeInstance.clear();
+                    qrcodeInstance.makeCode(getLiveQRUrl());
+                    qrCountdownValue = 10;
+                }
+            }, 1000);
+        }
+
+        function getLiveQRUrl() {
+            const domain = state.configs.domainUrl || window.location.origin;
+            const liveToken = btoa(`eclock_${Date.now()}`);
+            
+            const cfgObj = {
+                s: state.configs.googleSheetsUrl || "",
+                d: state.configs.domainUrl || "",
+                i: state.configs.ipLockEnabled ? 1 : 0,
+                o: state.configs.officeIp || "",
+                q: state.configs.qrSecurityEnabled ? 1 : 0
+            };
+            const cfgParam = btoa(JSON.stringify(cfgObj));
+            return `${domain}?token=${liveToken}&cfg=${cfgParam}`;
+        }
+
+        function updateQRProgressDisplay() {
+            const progressBar = document.getElementById("qr-progress-bar");
+            const progressText = document.getElementById("qr-progress-text");
+            if (progressBar) {
+                const percentage = (qrCountdownValue / 10) * 100;
+                progressBar.style.width = `${percentage}%`;
+            }
+            if (progressText) {
+                progressText.innerText = `Refreshing in ${qrCountdownValue}s`;
+            }
+        }
+
+        // --- Auth Validation ---
+        function verifyAdminPassword() {
+            const pwd = document.getElementById("admin-password-input").value;
+            if (pwd === "1234") {
+                document.getElementById("admin-auth").classList.add("hidden");
+                document.getElementById("admin-content").classList.remove("hidden");
+                showToast("✅ Admin Console Unlocked");
+            } else {
+                showToast("❌ Incorrect passcode");
+            }
+        }
+
+        // --- Check-In Engine Handler ---
+        function handleCheckIn(action) {
+            const empId = document.getElementById("employee-select").value;
+            if (!empId) {
+                showToast("⚠️ Please select your name");
+                return;
+            }
+
+            if (state.configs.qrSecurityEnabled) {
+                evaluateIncomingToken();
+                if (!tokenVerifiedStatus.valid) {
+                    showToast("❌ Access Denied: Secure token expired. Re-scan the active tablet screen.");
+                    updateUI();
+                    return;
+                }
+            }
+
+            if (state.configs.ipLockEnabled && state.configs.officeIp) {
+                if (state.currentIp !== state.configs.officeIp) {
+                    showToast(`🚫 Location Violation: Local IP [${state.currentIp}] does not match office gateway`);
+                    return;
+                }
+            }
+
+            const newLog = {
+                timestamp: Date.now(),
+                employeeId: empId,
+                action: action,
+                ip: state.currentIp || "Unknown"
+            };
+
+            state.checkIns.push(newLog);
+            saveToLocalStorage();
+            updateUI();
+            showToast(`🎉 Log registered successfully on disk`);
+
+            syncWithGoogleSheets();
+        }
+
+        // --- Employee Directory Controllers ---
+        function addNewStaff() {
+            const name = document.getElementById("new-staff-name").value.trim();
+            const rate = document.getElementById("new-staff-rate").value.trim();
+
+            if (!name || !rate) {
+                showToast("⚠️ Complete all name and wage fields");
+                return;
+            }
+
+            const newEmp = {
+                id: "emp_" + Math.random().toString(36).substring(2, 9),
+                name: name,
+                rate: parseFloat(rate)
+            };
+
+            state.employees.push(newEmp);
+            saveToLocalStorage();
+            updateUI();
+            
+            document.getElementById("new-staff-name").value = "";
+            document.getElementById("new-staff-rate").value = "";
+            showToast(`✅ Enrolled ${name}`);
+
+            syncWithGoogleSheets();
+        }
+
+        function removeStaff(id) {
+            const emp = state.employees.find(e => e.id === id);
+            if (emp) {
+                state.employees = state.employees.filter(e => e.id !== id);
+                saveToLocalStorage();
+                updateUI();
+                showToast(`🗑️ Removed ${emp.name}`);
+                syncWithGoogleSheets();
+            }
+        }
+
+        // --- Control Setup Updates ---
+        function toggleIpLock() {
+            state.configs.ipLockEnabled = !state.configs.ipLockEnabled;
+            saveToLocalStorage();
+            updateUI();
+        }
+
+        // --- Control Setup Updates ---
+        function toggleQrLock() {
+            state.configs.qrSecurityEnabled = !state.configs.qrSecurityEnabled;
+            saveToLocalStorage();
+            updateUI();
+        }
+
+        function saveAllSettings() {
+            const sheetsUrl = document.getElementById("setting-sheets-url").value.trim();
+            const liveUrl = document.getElementById("setting-live-url").value.trim();
+            const officeIp = document.getElementById("setting-office-ip").value.trim();
+
+            state.configs.googleSheetsUrl = sheetsUrl;
+            state.configs.domainUrl = liveUrl;
+            state.configs.officeIp = officeIp;
+
+            saveToLocalStorage();
+            updateUI();
+            showToast("💾 System configurations saved locally");
+
+            // Pull immediately to ensure sync alignment
+            pullFromGoogleSheets();
+        }
+
+        // --- Public IP Detection ---
+        function fetchCurrentIp(showFeedback = true) {
+            fetch('https://api.ipify.org?format=json')
+                .then(res => res.json())
+                .then(data => {
+                    state.currentIp = data.ip;
+                    if (document.getElementById("setting-office-ip")) {
+                        document.getElementById("setting-office-ip").value = data.ip;
+                    }
+                    if (showFeedback) {
+                        showToast(`📡 Public IP detected: ${data.ip}`);
+                    }
+                })
+                .catch(err => {
+                    console.error("IP resolution error:", err);
+                    if (showFeedback) {
+                        showToast("❌ Unable to resolve external IP structure");
+                    }
+                });
+        }
+
+        // --- PUSH: Push logs to Google Sheets ---
+        function syncWithGoogleSheets() {
+            const url = state.configs.googleSheetsUrl;
+            if (!url) {
+                console.log("Offline Local Memory active. Set Sheets URL to enable Cloud Sync.");
+                return;
+            }
+
+            const statusBox = document.getElementById("sync-status");
+            const statusText = document.getElementById("status-text");
+            statusText.innerText = "CONNECTING GOOGLE SHEETS...";
+
+            const payload = {
+                action: "sync",
+                employees: state.employees,
+                checkIns: state.checkIns,
+                configs: state.configs
+            };
+
+            fetch(url, {
+                method: "POST",
+                mode: "no-cors", 
+                headers: {
+                    "Content-Type": "application/json"
+                },
+                body: JSON.stringify(payload)
+            })
+            .then(() => {
+                statusBox.className = "flex items-center space-x-2 bg-emerald-600 px-3 py-1.5 rounded-full text-xs font-semibold uppercase tracking-wider transition-colors duration-300";
+                statusText.innerText = "ACTIVE GOOGLE SHEETS SYNC";
+                console.log("Successfully pushed logs to Google Sheets.");
+            })
+            .catch(err => {
+                console.error("Cloud synchronization error:", err);
+                statusBox.className = "flex items-center space-x-2 bg-red-700 px-3 py-1.5 rounded-full text-xs font-semibold uppercase tracking-wider transition-colors duration-300";
+                statusText.innerText = "SYNC FAILED (ERROR)";
+                showToast("⚠️ Synchronization failed.");
+            });
+        }
+
+        // --- PULL: Fetch latest staff and logs from Google Sheets ---
+        function pullFromGoogleSheets() {
+            const url = state.configs.googleSheetsUrl;
+            if (!url) return;
+
+            const statusBox = document.getElementById("sync-status");
+            const statusText = document.getElementById("status-text");
+
+            fetch(url + "?action=pull")
+                .then(res => res.json())
+                .then(resData => {
+                    if (resData.status === "success" && resData.data) {
+                        // Dynamically update state with latest sheets database records
+                        state.employees = resData.data.employees || [];
+                        state.checkIns = resData.data.checkIns || [];
+                        
+                        saveToLocalStorage();
+                        updateUI();
+                        
+                        statusBox.className = "flex items-center space-x-2 bg-emerald-600 px-3 py-1.5 rounded-full text-xs font-semibold uppercase tracking-wider transition-colors duration-300";
+                        statusText.innerText = "ACTIVE GOOGLE SHEETS SYNC";
+                        console.log("Successfully pulled latest logs from Google Sheets.");
+                    }
+                })
+                .catch(err => {
+                    console.error("Pull sync failed:", err);
+                });
+        }
+
+        function manualSync() {
+            showToast("🔄 Fetching latest database records...");
+            pullFromGoogleSheets();
+        }
+
+        // --- Backup CSV Extraction Engine ---
+        function exportExcel() {
+            if (state.checkIns.length === 0) {
+                showToast("⚠️ No logged interactions to export");
+                return;
+            }
+
+            let csvContent = "data:text/csv;charset=utf-8,\uFEFF"; 
+            csvContent += "Timestamp,Readable Local Time,Employee Name,Action,Network Address IP\n";
+
+            state.checkIns.forEach(log => {
+                const name = getEmployeeName(log.employeeId);
+                const dateStr = new Date(log.timestamp).toLocaleString('en-US');
+                const action = log.action === 'IN' ? 'CHECK-IN' : 'CHECK-OUT';
+                csvContent += `"${log.timestamp}","${dateStr}","${name}","${action}","${log.ip}"\n`;
+            });
+
+            const encodedUri = encodeURI(csvContent);
+            const link = document.createElement("a");
+            link.setAttribute("href", encodedUri);
+            link.setAttribute("download", "boss_attendance_logs_raw.csv");
+            document.body.appendChild(link);
+            link.click();
+            document.body.removeChild(link);
+            showToast("📥 Backup log downloaded locally");
+        }
+
+        // --- Dialog Notifications UI ---
+        function showToast(message) {
+            const toast = document.getElementById("toast");
+            toast.innerText = message;
+            toast.className = "fixed bottom-6 left-1/2 transform -translate-x-1/2 bg-slate-900 text-white px-6 py-3.5 rounded-xl shadow-2xl text-sm font-medium transition duration-300 opacity-100 translate-y-0 z-50";
+            
+            setTimeout(() => {
+                toast.className = "fixed bottom-6 left-1/2 transform -translate-x-1/2 bg-slate-900 text-white px-6 py-3.5 rounded-xl shadow-2xl text-sm font-medium transition duration-300 opacity-0 translate-y-4 pointer-events-none z-50";
+            }, 3500);
+        }
+
+        function getEmployeeName(id) {
+            const emp = state.employees.find(e => e.id === id);
+            return emp ? emp.name : "Unknown Staff";
+        }
+    </script>
+</body>
+</html>
